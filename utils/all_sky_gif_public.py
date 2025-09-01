@@ -39,7 +39,7 @@ G = GlobalSkyModel()
 
 location = EarthLocation(lon=-71.1097 * u.deg, lat=42.3736 * u.deg, height=10 * u.m)
 now_utc = Time.now()
-N_FRAMES = 144*3
+N_FRAMES = 144*2
 TIME_SPAN_HOURS = 24
 time_deltas = np.linspace(0, TIME_SPAN_HOURS, N_FRAMES) * u.hour
 observation_times = now_utc + time_deltas
@@ -85,7 +85,7 @@ sky_map = hp.ud_grade(sky_map, nside_out=NSIDE)
 
 yellow_star_frames_remaining = 0
 yellow_star_position = None
-YELLOW_STAR_DURATION = 6.5
+YELLOW_STAR_DURATION = 100
 RED_STAR_MEAN = 4
 
 OVERLAY_ALPHA = 0.4
@@ -94,16 +94,13 @@ OVERLAY_ALPHA = 0.4
 
 fig = plt.figure(figsize=(16, 10))
 gs = fig.add_gridspec(
-    2, 2,
+    1, 2,
     width_ratios=[2.2, 1.0],
-    height_ratios=[1, 1],  # bottom row is only 25% as tall as top row
-    wspace=0.15,
-    hspace=0.10
+    wspace=0.15
 )
 
-# Right column axes (created once)
+# Right column axes (only bar chart now)
 ax_bar  = fig.add_subplot(gs[0, 1])
-ax_hist = fig.add_subplot(gs[1, 1])  # <-- NOTE: typo fixed below; keep reading
 
 
 # Define the field of view disc parameters
@@ -123,7 +120,7 @@ alpha_mask[pixels_in_disc] = 0.50
 pixels_in_disc = hp.query_disc(NSIDE, center_vec, 0.9*radius_rad, nest=False)
 alpha_mask[pixels_in_disc] = 0.75
 
-# --- 3. Precompute bar/hist series & create artists ONCE ---
+# --- 3. Precompute bar chart series & create artists ONCE ---
 
 rate_casm_bar = 1
 rate_trad_bar = 0.1
@@ -144,37 +141,6 @@ ax_bar.set_ylabel("Number", fontsize=15, labelpad=10)
 ax_bar.set_ylim(0, builtins.max(casm_bar_counts[-1], trad_bar_counts[-1]) * 1.10)
 ax_bar.set_xticklabels(categories, fontsize=15)  # adjust fontsize as needed
 bar_labels = [ax_bar.text(b.get_x()+b.get_width()/2., 0, "0", ha="center", va="bottom") for b in bars]
-
-# Histogram series
-lambda_total_casm = 0.5
-lambda_total_trad = 5.0
-r_min, r_max = 1.0, 10000.0
-n_bins = 120
-scale_casm, scale_trad = 50.0, 500.0
-rng_hist = np.random.default_rng(12345)
-
-edges = np.linspace(r_min, r_max, n_bins + 1)
-centers = 0.5 * (edges[:-1] + edges[1:])
-
-shape_casm = centers**2 * np.exp(-centers / scale_casm)
-shape_trad = centers**2 * np.exp(-centers / scale_trad)
-shape_casm = shape_casm / shape_casm.sum() * lambda_total_casm
-shape_trad = shape_trad / shape_trad.sum() * lambda_total_trad
-
-inc_casm = rng_hist.poisson(shape_casm, size=(N_FRAMES, n_bins))
-inc_trad = rng_hist.poisson(shape_trad, size=(N_FRAMES, n_bins))
-
-hist_casm = np.zeros(n_bins, dtype=int)
-hist_trad = np.zeros(n_bins, dtype=int)
-
-(line_casm,) = ax_hist.plot([], [], drawstyle="steps-mid", label="CASM", color="red", lw=2)
-(line_trad,) = ax_hist.plot([], [], drawstyle="steps-mid", label="Traditional FRB\ntelescope", color="goldenrod", lw=2)
-ax_hist.set_xscale("log")
-ax_hist.set_xlim(r_min*5, r_max)
-ax_hist.set_ylim(0, 1)  # will expand
-ax_hist.set_xlabel("Distance (Mpc)", fontsize=15)
-ax_hist.set_ylabel("Number", fontsize=15, labelpad=10)
-ax_hist.legend(loc="upper left", fontsize=8)
 
 # --- 4. Build the left Healpy axes ONCE and lock it to the left GridSpec cell ---
 
@@ -208,14 +174,8 @@ y0 = y_center - total_h / 2.0       # bottom of the stacked right panels
 rbox = ax_bar.get_position()
 x0, w = rbox.x0, rbox.width
 
-# Split the total height between bar (top) and hist (bottom)
-vpad = 0.05                         # small gap between the two (figure coords)
-h1 = (total_h - vpad) * 0.55        # top panel height (55%)
-h2 = (total_h - vpad) * 0.45        # bottom panel height (45%)
-
-# Position them (figure coordinates: [left, bottom, width, height])
-ax_hist.set_position([x0, y0,                 w, h2])
-ax_bar.set_position( [x0, y0 + h2 + vpad,     w, h1])
+# Position the bar chart to take up the full height of the right column
+ax_bar.set_position([x0, y0, w, total_h])
 
 # Create healpy axes and move it to the left cell rectangle
 hp.mollview(rotated_map0, nest=False, min=0, max=int(100), cbar=False,
@@ -230,7 +190,7 @@ plt.sca(ax_left)
 BRIGHT=False
 
 def update(frame_index):
-    global BRIGHT, yellow_star_frames_remaining, yellow_star_position, hist_casm, hist_trad
+    global BRIGHT, yellow_star_frames_remaining, yellow_star_position
 
     current_time = observation_times[frame_index]
     rotated_map = map_at_time(current_time)
@@ -274,7 +234,31 @@ def update(frame_index):
 
     # Yellow star persistence
     if yellow_star_frames_remaining > 0:
-        hp.projplot(yellow_star_position[0], yellow_star_position[1], 'r*', markersize=17.5)
+        alpha = builtins.max(0.10, yellow_star_frames_remaining / YELLOW_STAR_DURATION)
+        size_star = builtins.max(0.5, yellow_star_frames_remaining / YELLOW_STAR_DURATION) * 17.5
+        # Transform the stored galactic coordinates to current AltAz frame
+        # yellow_star_position contains (theta_galactic, phi_galactic) in galactic coordinates
+        theta_gal, phi_gal = yellow_star_position
+        
+        try:
+            # Convert to SkyCoord in galactic frame
+            gal_coord = SkyCoord(l=phi_gal * u.rad, b=(np.pi/2.0 - theta_gal) * u.rad, frame='galactic')
+            
+            # Transform to current AltAz frame
+            altaz_frame = AltAz(obstime=current_time, location=location)
+            altaz_coord = gal_coord.transform_to(altaz_frame)
+            
+            # Only plot if the star is above the horizon
+            if altaz_coord.alt.rad > 0:
+                # Convert to healpy coordinates for plotting
+                theta_altaz = np.pi/2.0 - altaz_coord.alt.rad
+                phi_altaz = altaz_coord.az.rad
+                
+                hp.projplot(theta_altaz, phi_altaz, 'r*', markersize=size_star, alpha=alpha)
+        except Exception as e:
+            # If coordinate transformation fails, skip plotting this frame
+            pass
+            
         yellow_star_frames_remaining -= 1
     elif np.random.randint(0, 15) == 8:
         bright_pixels_mask = rotated_map[pixels_in_disc] > 50
@@ -282,7 +266,7 @@ def update(frame_index):
         if len(bright_pixels_in_disc) > 0:
             selected_pixel = bright_pixels_in_disc[np.random.randint(0, len(bright_pixels_in_disc))]
             theta, phi = hp.pix2ang(NSIDE, selected_pixel, nest=False)
-            yellow_star_position = (theta, phi)
+            yellow_star_position = (theta, phi)  # Store in galactic coordinates
             yellow_star_frames_remaining = int(YELLOW_STAR_DURATION) - 1
             hp.projplot(theta, phi, 'r*', markersize=17.5)
 
@@ -334,35 +318,6 @@ def update(frame_index):
         bar_labels[0].set_y(current_casm_bar); bar_labels[0].set_text(f"{int(current_casm_bar)}")
         bar_labels[1].set_y(current_trad_bar); bar_labels[1].set_text(f"{int(current_trad_bar)}")
 
-    # RIGHT BOTTOM: update histogram
-    # if frame_index < N_FRAMES:
-    #     hist_casm += inc_casm[frame_index]
-    #     hist_trad += inc_trad[frame_index]
-    #     line_casm.set_data(centers, hist_casm)
-    #     line_trad.set_data(centers, hist_trad)
-    #     current_max = builtins.max(int(hist_casm.max()), int(hist_trad.max()))
-    #     ymin, ymax = ax_hist.get_ylim()
-    #     if current_max > 0.95 * ymax:
-    #         ax_hist.set_ylim(0, current_max * 1.10)
-
-    # RIGHT BOTTOM: update histogram
-    if frame_index < N_FRAMES:
-        hist_casm += inc_casm[frame_index]
-        hist_trad += inc_trad[frame_index]
-
-        # pad both ends so the steps touch y=0 at start & end
-        x_pad = np.r_[centers[0], centers, centers[-1]]
-        y_casm = np.r_[0,        hist_casm, 0]
-        y_trad = np.r_[0,        hist_trad, 0]
-
-        line_casm.set_data(x_pad, y_casm)   # drawstyle="steps-mid" already set
-        line_trad.set_data(x_pad, y_trad)
-
-        current_max = builtins.max(int(hist_casm.max()), int(hist_trad.max()))
-        ymin, ymax = ax_hist.get_ylim()
-        if current_max > 0.95 * ymax:
-            ax_hist.set_ylim(0, current_max * 1.10)
-
     return ()
 
 # --- 6. Animate & Save ---
@@ -370,10 +325,10 @@ def update(frame_index):
 print("Generating animation... This may take a few minutes.")
 ani = animation.FuncAnimation(fig, update, frames=N_FRAMES, blit=False)
 
-try:
-    ani.save('combined_animation.gif', writer=PillowWriter(fps=12), dpi=100)
-    print("\nAnimation saved successfully as 'combined_animation.gif'")
-except Exception as e:
-    print(f"\nCould not save animation. Error: {e}")
-    print("Showing interactive plot instead.")
-    plt.show()
+# try:
+#     ani.save('combined_animation.gif', writer=PillowWriter(fps=12), dpi=100)
+#     print("\nAnimation saved successfully as 'combined_animation.gif'")
+# except Exception as e:
+#     print(f"\nCould not save animation. Error: {e}")
+#     print("Showing interactive plot instead.")
+#     plt.show()
