@@ -2,7 +2,6 @@ import numpy as np
 import healpy as hp
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from matplotlib.animation import PillowWriter
 import matplotlib.colors as mcolors
 from astropy.time import Time
 from astropy.coordinates import EarthLocation, AltAz, SkyCoord
@@ -83,8 +82,8 @@ sky_map = get_ralf_map(plot=False)
 nside_ralf = hp.npix2nside(len(sky_map))
 sky_map = hp.ud_grade(sky_map, nside_out=NSIDE)
 
-yellow_star_frames_remaining = 0
-yellow_star_position = None
+# Store all yellow star positions (galactic coordinates) and their creation times
+yellow_star_positions = []  # List of (theta_gal, phi_gal, creation_frame) tuples
 YELLOW_STAR_DURATION = 100
 RED_STAR_MEAN = 4
 
@@ -232,42 +231,57 @@ def update(frame_index):
     trad_circle_phi   = traditional_center_phi   + traditional_radius*np.sin(angles)
     hp.projplot(trad_circle_theta, trad_circle_phi, 'C1-', linewidth=2, alpha=0.8)
 
-    # Yellow star persistence
-    if yellow_star_frames_remaining > 0:
-        alpha = builtins.max(0.10, yellow_star_frames_remaining / YELLOW_STAR_DURATION)
-        size_star = builtins.max(0.5, yellow_star_frames_remaining / YELLOW_STAR_DURATION) * 17.5
-        # Transform the stored galactic coordinates to current AltAz frame
-        # yellow_star_position contains (theta_galactic, phi_galactic) in galactic coordinates
-        theta_gal, phi_gal = yellow_star_position
-        
-        try:
-            # Convert to SkyCoord in galactic frame
-            gal_coord = SkyCoord(l=phi_gal * u.rad, b=(np.pi/2.0 - theta_gal) * u.rad, frame='galactic')
+    # Yellow star persistence - plot all existing stars
+    if yellow_star_positions:
+        # Create a copy of the list to avoid modification during iteration
+        stars_to_remove = []
+        for star_data in yellow_star_positions:
+            theta_gal, phi_gal, creation_frame = star_data
             
-            # Transform to current AltAz frame
-            altaz_frame = AltAz(obstime=current_time, location=location)
-            altaz_coord = gal_coord.transform_to(altaz_frame)
+            # Calculate the remaining duration for this star
+            remaining_duration = YELLOW_STAR_DURATION - (frame_index - creation_frame)
             
-            # Only plot if the star is above the horizon
-            if altaz_coord.alt.rad > 0:
-                # Convert to healpy coordinates for plotting
-                theta_altaz = np.pi/2.0 - altaz_coord.alt.rad
-                phi_altaz = altaz_coord.az.rad
+            # Only plot if the star is still visible
+            if remaining_duration > 0:
+                alpha = builtins.max(0.10, remaining_duration / YELLOW_STAR_DURATION)
+                size_star = builtins.max(0.5, remaining_duration / YELLOW_STAR_DURATION) * 17.5
                 
-                hp.projplot(theta_altaz, phi_altaz, 'r*', markersize=size_star, alpha=alpha)
-        except Exception as e:
-            # If coordinate transformation fails, skip plotting this frame
-            pass
-            
-        yellow_star_frames_remaining -= 1
-    elif np.random.randint(0, 15) == 8:
+                try:
+                    # Convert to SkyCoord in galactic frame
+                    gal_coord = SkyCoord(l=phi_gal * u.rad, b=(np.pi/2.0 - theta_gal) * u.rad, frame='galactic')
+                    
+                    # Transform to current AltAz frame
+                    altaz_frame = AltAz(obstime=current_time, location=location)
+                    altaz_coord = gal_coord.transform_to(altaz_frame)
+                    
+                    # Only plot if the star is above the horizon
+                    if altaz_coord.alt.rad > 0:
+                        # Convert to healpy coordinates for plotting
+                        theta_altaz = np.pi/2.0 - altaz_coord.alt.rad
+                        phi_altaz = altaz_coord.az.rad
+                        
+                        hp.projplot(theta_altaz, phi_altaz, 'r*', markersize=size_star, alpha=alpha)
+                except Exception as e:
+                    # If coordinate transformation fails, skip plotting this frame
+                    pass
+            else:
+                # Mark this star for removal
+                stars_to_remove.append(star_data)
+        
+        # Remove expired stars
+        for star_data in stars_to_remove:
+            yellow_star_positions.remove(star_data)
+    
+    # Check if we should create a new yellow star
+    if np.random.randint(0, 15) == 8:
         bright_pixels_mask = rotated_map[pixels_in_disc] > 50
         bright_pixels_in_disc = pixels_in_disc[bright_pixels_mask]
         if len(bright_pixels_in_disc) > 0:
             selected_pixel = bright_pixels_in_disc[np.random.randint(0, len(bright_pixels_in_disc))]
             theta, phi = hp.pix2ang(NSIDE, selected_pixel, nest=False)
-            yellow_star_position = (theta, phi)  # Store in galactic coordinates
-            yellow_star_frames_remaining = int(YELLOW_STAR_DURATION) - 1
+            # Add new star to the list with current frame as creation time
+            yellow_star_positions.append((theta, phi, frame_index))
+            # Plot the new star immediately
             hp.projplot(theta, phi, 'r*', markersize=17.5)
 
     # Red stars

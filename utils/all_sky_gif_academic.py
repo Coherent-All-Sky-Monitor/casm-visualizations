@@ -85,14 +85,22 @@ sky_map = hp.ud_grade(sky_map, nside_out=NSIDE)
 
 yellow_star_frames_remaining = 0
 yellow_star_position = None
-YELLOW_STAR_DURATION = 6.5
-RED_STAR_MEAN = 4
+YELLOW_STAR_DURATION = 7.0
+RED_STAR_MEAN = 3.75
 
 OVERLAY_ALPHA = 0.4
 
 # --- 2. Figure & GridSpec layout ---
 
 fig = plt.figure(figsize=(16, 10))
+plt.text(0.1, 0.20, "Ultra-bright, local Universe FRB", fontsize=15, color='k', ha='left', va='center')
+plt.text(0.1, 0.15, "Cosmological FRB", fontsize=15, color='k', ha='left', va='center')
+plt.scatter(0.05, 0.20, marker='*', s=500, color='red', edgecolor='darkred')
+plt.scatter(0.05, 0.15, marker='*', s=100, color='goldenrod', edgecolor='k', lw=0.5)
+plt.xlim(0,1)
+plt.ylim(0,1)
+plt.axis('off')
+
 gs = fig.add_gridspec(
     2, 2,
     width_ratios=[2.2, 1.0],
@@ -276,7 +284,7 @@ def update(frame_index):
     if yellow_star_frames_remaining > 0:
         hp.projplot(yellow_star_position[0], yellow_star_position[1], 'r*', markersize=17.5)
         yellow_star_frames_remaining -= 1
-    elif np.random.randint(0, 15) == 8:
+    elif np.random.randint(0, 12) == 8:
         bright_pixels_mask = rotated_map[pixels_in_disc] > 50
         bright_pixels_in_disc = pixels_in_disc[bright_pixels_mask]
         if len(bright_pixels_in_disc) > 0:
@@ -371,7 +379,7 @@ print("Generating animation... This may take a few minutes.")
 ani = animation.FuncAnimation(fig, update, frames=N_FRAMES, blit=False)
 
 try:
-    ani.save('combined_animation.gif', writer=PillowWriter(fps=12), dpi=100)
+    ani.save('./visualizations/casm_256_academic.gif', writer=PillowWriter(fps=12), dpi=100)
     print("\nAnimation saved successfully as 'combined_animation.gif'")
 except Exception as e:
     print(f"\nCould not save animation. Error: {e}")
